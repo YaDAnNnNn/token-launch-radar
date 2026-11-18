@@ -113,11 +113,13 @@
     return (
       '<section class="model-box"><h2>How the implied value is built — from the snapshot itself</h2>' +
       '<p class="formula"><code>implied = TVL × category multiple × growth × maturity × breadth</code></p>' +
-      '<p><strong>Category multiple:</strong> the median market-cap / TVL of the live-token protocols in the same ' +
-      'category, shrunk toward the global median (<strong>×' + DATA.calibration.global_multiple.toFixed(2) + '</strong>) when a category has ' +
-      'few live samples, clamped to ×0.04–×2.50. <strong>Growth:</strong> the 7-day TVL change, clamped to −40%…+60%, weighted 0.55. ' +
+      '<p><strong>Category multiple:</strong> a sample-weighted geometric blend of the category\u2019s median market-cap / TVL ' +
+      'with the global median (<strong>×' + DATA.calibration.global_multiple.toFixed(2) + '</strong>) — weight n : 4 on the category\u2019s own live samples, ' +
+      'so a one-sample category keeps only a fifth of its own signal and an outlier ratio is compressed, not amplified — clamped to ×0.04–×1.50. ' +
+      '<strong>Growth:</strong> the 7-day TVL change, clamped to −40%…+60%, weighted 0.55. ' +
       '<strong>Maturity:</strong> years live with no token, full weight at four years. <strong>Breadth:</strong> +2.5% per extra chain, up to eight. ' +
-      'Open any protocol to see its own five numbers multiplied out.</p>' +
+      'Every row names the live samples behind its multiple; rows resting on fewer than 3 samples are marked <em>thin</em> — their price leans ' +
+      'mostly on the market-wide median. Open any protocol to see its own five numbers multiplied out.</p>' +
       '<div class="calib">' + chips + '</div></section>'
     );
   }
@@ -154,7 +156,8 @@
         '<td class="num ' + (r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg') + '">' + fmtPct(r.change_7d) + '</td>' +
         '<td class="num hide-s">' + fmtAge(r.age_days, r.age_assumed) + '</td>' +
         '<td class="num implied">' + fmtUsd(r.implied_value_usd) + '</td>' +
-        '<td class="hide-s">×' + ratio + '</td>' +
+        '<td class="hide-s">×' + ratio + '<span class="' + (r.category_samples < 3 ? 'cat conf-thin' : 'cat') + '">mult ×' +
+        r.category_multiple.toFixed(2) + ' · ' + r.category_samples + ' live' + (r.category_samples < 3 ? ' · thin' : '') + '</span></td>' +
         '<td class="chains hide-s">' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + '</td></tr>'
       );
     }).join('');
@@ -197,12 +200,16 @@
       '<div class="cell"><b>' + fmtPct(r.change_7d) + '</b><span>TVL change 7d</span></div>' +
       '<div class="cell"><b>' + fmtAge(r.age_days, r.age_assumed) + '</b><span>Live, no token</span></div>' +
       '<div class="cell"><b>×' + r.category_multiple.toFixed(2) + '</b><span>Category multiple</span></div>' +
-      '<div class="cell"><b>' + r.category_samples + '</b><span>Live samples in category</span></div>' +
+      '<div class="cell"><b>' + r.category_samples + (r.category_samples < 3 ? ' — thin' : r.category_samples < 6 ? ' — fair' : ' — solid') +
+      '</b><span>Live samples in category</span></div>' +
       '</div>' +
       '<div class="eq">' + esc(eq) + '</div>' +
-      '<p class="sub" style="margin-top:10px">The ×' + r.category_multiple.toFixed(2) + ' multiple is the median market-cap / TVL of the ' +
-      cal.samples + ' live-token ' + esc(cal.category) + ' protocols in this snapshot (raw median ×' + cal.median_ratio.toFixed(2) +
-      '), so this row is priced the way the market already prices its traded peers — not by a guess at its name.</p>' +
+      '<p class="sub" style="margin-top:10px">The ×' + r.category_multiple.toFixed(2) + ' multiple is the sample-weighted geometric blend of the ' +
+      esc(cal.category) + ' raw median market-cap / TVL (×' + cal.median_ratio.toFixed(2) + ', from ' + cal.samples + ' live-token protocol' +
+      (cal.samples === 1 ? '' : 's') + ') with the global median (×' + DATA.calibration.global_multiple.toFixed(2) + '): the category\u2019s own signal carries ' +
+      Math.round((100 * cal.samples) / (cal.samples + 4)) + '% of the weight.' +
+      (cal.samples < 3 ? ' That is thin evidence — this price leans mostly on the market-wide median, and the board marks the row thin.' : '') +
+      ' Either way the row is priced from its traded peers\u2019 numbers, not by a guess at its name.</p>' +
       '<h3>Farm plan — what to do, what it costs, how long it takes</h3><ol class="farm">' + steps + '</ol></section>'
     );
   }

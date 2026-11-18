@@ -1,4 +1,4 @@
-// Token Launch Radar — model v2 (calibrated).
+// Token Launch Radar — model v3 (calibrated, confidence-weighted).
 //
 // One sealed snapshot in, one ranked board out. The board ranks protocols that record
 // no token yet ("pre-token": no market cap, no CoinGecko id, no symbol in the snapshot)
@@ -10,10 +10,18 @@
 //
 //   1. Category multiple, calibrated in-sample. For every category, take the live-token
 //      protocols in that category and their market-cap / TVL ratios; the category's
-//      multiple is the median ratio, shrunk toward the global median when the category
-//      has few live samples, and clamped to [0.04, 2.5]. A lending market and a DEX are
-//      not priced off the same multiple, and no multiple is a hand-picked constant:
-//      change the snapshot and every multiple moves.
+//      multiple is the weighted geometric mean of its own median ratio and the global
+//      median ratio, weighted n : 4 by live sample count — in one sentence: a category
+//      earns trust in proportion to its live samples, and the log scale compresses
+//      outlier ratios instead of letting them explode a price. A category with one
+//      live sample keeps only a fifth of its own signal (the earlier linear shrink
+//      let a single Risk Curators sample, raw median x2.97, hold the board's top
+//      rows at x0.67; one live Prediction Market sample sits at x400). The blend is
+//      clamped to [0.04, 1.5]: the cap sits above the highest category median backed
+//      by at least three live samples in this snapshot (x1.22), so it only ever
+//      bites on thin or extreme data, never on a well-sampled category. A lending
+//      market and a DEX are not priced off the same multiple, and no multiple is a
+//      hand-picked constant: change the snapshot and every multiple moves.
 //   2. Growth: the 7-day TVL change, clamped to [-40, +60] percent, weighted 0.55.
 //   3. Maturity: how long the protocol has run with no token, from listed_at to the
 //      snapshot date; full weight at four years, floor 0.72. Unknown listing dates use
@@ -76,12 +84,12 @@ export const WEIGHTS = {
   breadth_per_chain: 0.025,
   breadth_max_extra: 8,
   multiple_floor: 0.04,
-  multiple_cap: 2.5,
-  shrink_samples: 6,
+  multiple_cap: 1.5,
+  shrink_prior: 4,
 } as const;
 
 /** The model's version label, named in the dashboard and on every board row. */
-export const MODEL_VERSION = 'radar-2-calibrated';
+export const MODEL_VERSION = 'radar-3-confidence';
 
 /** How many live-token protocols the dashboard's "already trading" view carries. */
 export const LIVE_ROWS = 30;
@@ -231,15 +239,18 @@ export function isRankable(p: SnapshotProtocol): boolean {
 
 /**
  * Calibrate the category multiples from the snapshot's own live-token protocols.
- * Each category's raw multiple is the median market-cap / TVL of its live protocols;
- * categories with fewer than WEIGHTS.shrink_samples samples are shrunk toward the
- * global median in proportion to how many samples they are missing.
+ * Each category's raw figure is the median market-cap / TVL of its live protocols;
+ * the multiple used is the weighted geometric mean of that median and the global
+ * median, weighted n : WEIGHTS.shrink_prior by live sample count, so a thin
+ * category falls back toward the market-wide price and an extreme single ratio
+ * (x400 exists in this snapshot) is compressed by the log scale, then clamped.
  */
 export function calibrate(snapshot: Snapshot): Calibration {
   const live = snapshot.protocols.filter(
     (p) => !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0,
   );
   const globalMedian = live.length > 0 ? median(live.map((p) => p.mcap_usd! / p.tvl_usd)) : 0.25;
+  const logGlobal = Math.log(globalMedian);
   const byCategory = new Map<string, number[]>();
   for (const p of live) {
     const key = p.category ?? 'Uncategorized';
@@ -251,10 +262,7 @@ export function calibrate(snapshot: Snapshot): Calibration {
     .map(([category, ratios]) => {
       const med = median(ratios);
       const n = ratios.length;
-      const shrunk =
-        n >= WEIGHTS.shrink_samples
-          ? med
-          : (n * med + (WEIGHTS.shrink_samples - n) * globalMedian) / WEIGHTS.shrink_samples;
+      const shrunk = Math.exp((n * Math.log(med) + WEIGHTS.shrink_prior * logGlobal) / (n + WEIGHTS.shrink_prior));
       return {
         category,
         samples: n,
